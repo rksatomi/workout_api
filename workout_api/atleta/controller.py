@@ -3,13 +3,15 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, HTTPException, status
 from pydantic import UUID4
 
-from workout_api.atleta.schemas import AtletaIn, AtletaOut, AtletaUpdate
+from workout_api.atleta.schemas import AtletaIn, AtletaOut, AtletaUpdate, AtletaCustom
 from workout_api.atleta.models import AtletaModel
 from workout_api.categorias.models import CategoriaModel
 from workout_api.centro_treinamento.models import CentroTreinamentoModel
 
 from workout_api.contrib.dependencies import DatabaseDependency
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
+from fastapi_pagination import Page, LimitOffsetPage, paginate
 
 router = APIRouter()
 
@@ -23,13 +25,19 @@ async def post(
     db_session: DatabaseDependency, 
     atleta_in: AtletaIn = Body(...)
 ):
+    cpf_atlteta = atleta_in.cpf
+    cpf = (await db_session.execute(select(AtletaModel).filter_by(cpf=cpf_atlteta))).scalars().first()
+    if cpf:
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            detail=f'J[a Existe um atleta cadastrado com o cpf: {cpf_atlteta}]'
+        )
     categoria_nome = atleta_in.categoria.nome
     centro_treinamento_nome = atleta_in.centro_treinamento.nome
 
     categoria = (await db_session.execute(
         select(CategoriaModel).filter_by(nome=categoria_nome))
     ).scalars().first()
-    
     if not categoria:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
@@ -67,12 +75,59 @@ async def post(
     '/', 
     summary='Consultar todos os Atletas',
     status_code=status.HTTP_200_OK,
-    response_model=list[AtletaOut],
+    response_model=LimitOffsetPage[AtletaOut],
 )
-async def query(db_session: DatabaseDependency) -> list[AtletaOut]:
-    atletas: list[AtletaOut] = (await db_session.execute(select(AtletaModel))).scalars().all()
-    
+async def query(db_session: DatabaseDependency):
+   
+    return await paginate(db_session, select(AtletaModel))
+
+""""
+@router.get(
+    '/', 
+    summary='Consultar todos os Atletas',
+    status_code=status.HTTP_200_OK,
+    response_model=list[AtletaOut],
+    )
+
+async def query(cpf:str, nome: str, db_session: DatabaseDependency) -> AtletaOut:
+    atletas: list = [AtletaOut] = (
+            atletas: list[AtletaCustom] = (await db_session.execute(select(AtletaModel))).scalars().all() 
+        )
     return [AtletaOut.model_validate(atleta) for atleta in atletas]
+
+"""
+
+
+@router.get(
+    '/', 
+    summary='Consultar todos os Atletas Customizado',
+    status_code=status.HTTP_200_OK,
+    response_model=list[AtletaCustom],
+)
+async def query(db_session: DatabaseDependency) -> list[AtletaCustom]:
+    atletas: list[AtletaCustom] = (await db_session.execute(select(AtletaModel))).scalars().all()
+
+   
+    return [AtletaCustom.model_validate(atleta) for atleta in atletas]
+
+@router.get(
+    '/  ', 
+    summary='Consultar Nome e CPF',
+    status_code=status.HTTP_200_OK,
+    response_model=AtletaCustom,
+)
+async def query(cpf:str, nome: str, db_session: DatabaseDependency) -> AtletaOut:
+    atleta: AtletaOut = (
+        await db_session.execute(select(AtletaModel).filter_by(cpf=cpf, nome=nome))
+    ).scalars().first()
+    if not atleta:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f'Atleta com nome: {nome} e não encontrado!!'
+        )
+    return atleta
+
+
 
 
 @router.get(
@@ -85,7 +140,6 @@ async def get(id: UUID4, db_session: DatabaseDependency) -> AtletaOut:
     atleta: AtletaOut = (
         await db_session.execute(select(AtletaModel).filter_by(id=id))
     ).scalars().first()
-
     if not atleta:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, 
